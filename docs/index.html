@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vulkan Enum Search</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #4ec9b0;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .search-box {
+            margin-bottom: 20px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 20px;
+            font-size: 16px;
+            background: #2d2d30;
+            border: 2px solid #3e3e42;
+            color: #d4d4d4;
+            border-radius: 4px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            border-color: #4ec9b0;
+        }
+
+        .info {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #2d2d30;
+            border-left: 4px solid #4ec9b0;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .results {
+            background: #252526;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .result-header {
+            padding: 15px 20px;
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            font-weight: bold;
+            color: #4ec9b0;
+        }
+
+        .result-item {
+            padding: 12px 20px;
+            border-bottom: 1px solid #2d2d30;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            transition: background 0.2s;
+        }
+
+        .result-item:hover {
+            background: #2d2d30;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .enum-name {
+            color: #dcdcaa;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+        }
+
+        .enum-value {
+            color: #b5cea8;
+            font-family: 'Courier New', monospace;
+        }
+
+        .enum-value .original {
+            color: #ce9178;
+            opacity: 0.8;
+        }
+
+        .no-results {
+            padding: 40px 20px;
+            text-align: center;
+            color: #858585;
+            font-style: italic;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #4ec9b0;
+        }
+
+        @media (max-width: 768px) {
+            .result-item {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Vulkan Enum Search</h1>
+
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search by name, hex value (0x...), or decimal value..." autocomplete="off">
+        </div>
+
+        <div class="info">
+            <strong>Search tips:</strong>
+            Enter a name for fuzzy search • Use 0x prefix for hex values (e.g., 0x2, 0x02, 0x000002) •
+            Enter plain numbers for decimal search
+        </div>
+
+        <div class="results">
+            <div class="result-header" id="resultHeader">
+                <span id="resultCount">Loading enums...</span>
+            </div>
+            <div id="resultsList"></div>
+        </div>
+    </div>
+
+    <script>
+        let enumData = [];
+        let searchTimeout = null;
+
+        // Load and parse CSV
+        async function loadCSV() {
+            try {
+                const response = await fetch('data/vk_enums.csv');
+                const text = await response.text();
+                const lines = text.trim().split('\n');
+
+                // Skip header line
+                for (let i = 1; i < lines.length; i++) {
+                    const parts = lines[i].split(',');
+                    if (parts.length >= 3) {
+                        enumData.push({
+                            name: parts[0],
+                            original: parts[1] || '',
+                            decimal: parseInt(parts[2]) || 0
+                        });
+                    }
+                }
+
+                document.getElementById('resultCount').textContent = `Total: ${enumData.length} enums`;
+                displayResults(enumData);
+            } catch (error) {
+                document.getElementById('resultsList').innerHTML =
+                    '<div class="no-results">Error loading vk_enums.csv: ' + error.message + '</div>';
+            }
+        }
+
+        // Fuzzy search for name matching
+        function fuzzyMatch(needle, haystack) {
+            const hlen = haystack.length;
+            const nlen = needle.length;
+
+            if (nlen > hlen) return false;
+            if (nlen === hlen) return needle.toLowerCase() === haystack.toLowerCase();
+
+            needle = needle.toLowerCase();
+            haystack = haystack.toLowerCase();
+
+            // Simple contains check for better UX
+            if (haystack.includes(needle)) return true;
+
+            // Fuzzy matching
+            let j = 0;
+            for (let i = 0; i < nlen; i++) {
+                let nch = needle[i];
+                while (j < hlen) {
+                    if (haystack[j++] === nch) break;
+                }
+                if (j > hlen) return false;
+            }
+            return true;
+        }
+
+        // Calculate fuzzy match score (lower is better)
+        // Only matches if the query appears as a consecutive substring
+        function fuzzyScore(needle, haystack) {
+            needle = needle.toLowerCase();
+            haystack = haystack.toLowerCase();
+
+            // Exact match
+            if (needle === haystack) return 0;
+
+            // Starts with
+            if (haystack.startsWith(needle)) return 1;
+
+            // Contains as consecutive substring
+            const index = haystack.indexOf(needle);
+            if (index !== -1) return 2 + index;
+
+            // No consecutive match found
+            return 10000;
+        }
+
+        // Search function
+        function search(query) {
+            if (!query.trim()) {
+                return enumData;
+            }
+
+            query = query.trim();
+
+            // Check if it's a hex search
+            if (query.toLowerCase().startsWith('0x') || query.toLowerCase().startsWith('x')) {
+                const hexValue = query.toLowerCase().startsWith('0x') ? query.slice(2) : query.slice(1);
+                const decimalValue = parseInt(hexValue, 16);
+
+                if (!isNaN(decimalValue)) {
+                    return enumData.filter(item => item.decimal === decimalValue);
+                }
+                // If hex parse failed, fall through to name search
+            }
+
+            // Check if it's a decimal search (all digits, including negative)
+            if (/^-?\d+$/.test(query)) {
+                const decimalValue = parseInt(query, 10);
+                return enumData.filter(item => item.decimal === decimalValue);
+            }
+
+            // Name fuzzy search
+            const MAX_SCORE = 50; // Only show results with score below this threshold
+            const results = enumData
+                .map(item => ({
+                    ...item,
+                    score: fuzzyScore(query, item.name)
+                }))
+                .filter(item => item.score < MAX_SCORE) // Filter out poor matches
+                .sort((a, b) => a.score - b.score)
+                .slice(0, 100); // Limit to 100 results for performance
+
+            return results;
+        }
+
+        // Display results
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('resultsList');
+
+            if (results.length === 0) {
+                resultsDiv.innerHTML = '<div class="no-results">No matching enums found</div>';
+                return;
+            }
+
+            const html = results.map(item => {
+                // Format value display
+                let valueDisplay;
+                if (item.original === String(item.decimal)) {
+                    // Original and decimal are the same, just show decimal
+                    valueDisplay = item.decimal;
+                } else {
+                    // Show decimal (original)
+                    valueDisplay = `${item.decimal} <span class="original">(${escapeHtml(item.original)})</span>`;
+                }
+
+                return `
+                    <div class="result-item">
+                        <div class="enum-name">${escapeHtml(item.name)}</div>
+                        <div class="enum-value">${valueDisplay}</div>
+                    </div>
+                `;
+            }).join('');
+
+            resultsDiv.innerHTML = html;
+        }
+
+        // HTML escape
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Handle search input
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const query = e.target.value;
+
+            // Debounce search
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const results = search(query);
+                displayResults(results);
+
+                const count = results.length;
+                const total = enumData.length;
+                document.getElementById('resultCount').textContent =
+                    query.trim() ? `Showing ${count} of ${total} enums` : `Total: ${total} enums`;
+            }, 150);
+        });
+
+        // Load data on page load
+        loadCSV();
+    </script>
+</body>
+</html>
