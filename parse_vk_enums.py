@@ -293,6 +293,10 @@ def write_enums_to_file(enums_data, output_file='vk_enums.csv'):
             original = enum_data['original_repr'] or ''
             decimal = str(enum_data['decimal_value']) if enum_data['decimal_value'] is not None else ''
 
+            # Leave original blank if it matches the decimal value
+            if original == decimal:
+                original = ''
+
             f.write(f"{name},{original},{decimal}\n")
 
     print(f"Done! Enum values written to {output_file}")

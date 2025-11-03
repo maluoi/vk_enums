@@ -309,8 +309,8 @@
             const html = results.map(item => {
                 // Format value display
                 let valueDisplay;
-                if (item.original === String(item.decimal)) {
-                    // Original and decimal are the same, just show decimal
+                if (!item.original || item.original === String(item.decimal)) {
+                    // Original is blank or matches decimal, just show decimal
                     valueDisplay = item.decimal;
                 } else {
                     // Show decimal (original)
